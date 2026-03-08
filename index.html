@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pou Hunter: The Backrooms (Optimizado)</title>
+    <title>Pou Hunter: The Backrooms & Poolrooms</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
         body { margin: 0; overflow: hidden; font-family: 'Courier New', Courier, monospace; background-color: #1a1a0d; }
@@ -25,6 +25,7 @@
             color: #fbff00; text-align: center; cursor: pointer; z-index: 10;
         }
         .stats { font-size: 18px; margin-bottom: 5px; text-transform: uppercase; font-weight: bold; }
+        #level-text { font-size: 24px; color: #fff; margin-bottom: 10px; text-shadow: 2px 2px #000; }
         #health-bar { width: 200px; height: 10px; background: #222; border: 1px solid #fbff00; }
         #health-fill { width: 100%; height: 100%; background: #fbff00; }
         
@@ -33,19 +34,28 @@
             transform: translate(-50%, -50%); color: #ff0000; text-align: center;
             z-index: 20; background: rgba(0,0,0,0.9); padding: 40px; border: 2px solid #ff0000;
         }
+
+        #noclip-msg {
+            display: none; position: absolute; width: 100%; text-align: center;
+            top: 40%; color: white; font-size: 30px; font-weight: bold;
+            text-shadow: 0 0 10px #fff; pointer-events: none;
+        }
     </style>
 </head>
 <body>
 
     <div id="blocker">
-        <h1>LEVEL 0</h1>
-        <p>FORMA TRIANGULAR ACTUALIZADA</p>
+        <h1>LEVEL 0: INVASIÓN</h1>
+        <p>ELIMINA 20 PARA HACER NOCLIP</p>
         <br>
         <p>CLIC PARA INICIAR</p>
     </div>
 
+    <div id="noclip-msg">¡NOCLIP ACTIVADO!</div>
+
     <div id="gui">
-        <div class="stats">Eliminados: <span id="score">0</span></div>
+        <div id="level-text">LEVEL 0: BACKROOMS</div>
+        <div class="stats">Eliminados: <span id="score">0</span> / 20</div>
         <div id="health-bar"><div id="health-fill"></div></div>
     </div>
 
@@ -59,96 +69,122 @@
 
     <script>
         // Variables de núcleo
-        let scene, camera, renderer, rifle, instancedWalls;
-        let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+        let scene, camera, renderer, rifle, instancedWalls, muzzleFlash, floor, ceil, ambientLight, dirLight;
+        let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false, canJump = false;
         let velocity = new THREE.Vector3();
         let direction = new THREE.Vector3();
-        let enemies = [], bullets = [];
+        let enemies = [], bullets = [], lamps = [];
         let score = 0, health = 100, isPaused = true;
         let clock = new THREE.Clock();
         let pitch = 0, yaw = 0, bobTimer = 0, currentTilt = 0;
+        let flashTimer = 0;
 
-        // Configuración y Pool de objetos
+        // Estado de nivel
+        let currentLevel = 0;
+        let transitioning = false;
+        let enemySpeed = 0.045;
+        const KILLS_FOR_NOCLIP = 20;
+
+        // Configuración
         const WALL_COUNT = 150;
         const WALL_SIZE = { w: 4, h: 4, d: 0.8 };
+        const PLAYER_HEIGHT = 1.6;
+        const CEILING_HEIGHT = 4.0;
         const wallData = []; 
         
         const bulletGeo = new THREE.SphereGeometry(0.03, 6, 6);
         const bulletMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
         
-        // Geometría del Pou: Usamos una esfera de alta resolución para deformarla
         const enemyGeo = new THREE.SphereGeometry(0.6, 32, 32);
         let enemyMat; 
 
+        // Nueva URL de la textura de Poolrooms (Azulejos limpios)
+        const POOLROOMS_TEXTURE_URL = "https://i.pinimg.com/736x/08/18/20/0818207c9a8180eda4dc949877cfcbb9.jpg";
+
         function init() {
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x33331a);
-            scene.fog = new THREE.Fog(0x33331a, 2, 25);
+            scene.background = new THREE.Color(0x222211);
+            scene.fog = new THREE.Fog(0x222211, 2, 22);
 
             camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
             camera.rotation.order = 'YXZ';
+            camera.position.set(0, PLAYER_HEIGHT, 0);
             
-            renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+            renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
             document.body.appendChild(renderer.domElement);
 
-            // Luz ambiental
-            const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+            ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
             scene.add(ambientLight);
 
-            const mainLight = new THREE.PointLight(0xfbff00, 0.8, 20);
-            mainLight.position.set(0, 3, 0);
-            scene.add(mainLight);
+            dirLight = new THREE.DirectionalLight(0xffffff, 0.2);
+            dirLight.position.set(5, 10, 5);
+            scene.add(dirLight);
 
-            // Cargar texturas con soporte CORS
+            muzzleFlash = new THREE.PointLight(0xffaa00, 0, 10);
+            scene.add(muzzleFlash);
+
             const textureLoader = new THREE.TextureLoader();
             textureLoader.setCrossOrigin('anonymous');
             
-            // Textura de pared
-            const wallTex = textureLoader.load("https://images-wixmp-ed30a86b8c4ca887773594c2.wixmp.com/f/6ad57a68-b35b-4bb4-8566-8ffa9d9a1924/df1ci3n-3c48e003-7f3a-454b-a09a-c2a5c21e5737.png/v1/fit/w_600,h_594,q_70,strp/the_backrooms_wallpaper__seamless__by_dalay_lamma_df1ci3n-375w-2x.jpg?token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1cm46YXBwOjdlMGQxODg5ODIyNjQzNzNhNWYwZDQxNWVhMGQyNmUwIiwiaXNzIjoidXJuOmFwcDo3ZTBkMTg4OTgyMjY0MzczYTVmMGQ0MTVlYTBkMjZlMCIsIm9iaiI6W1t7ImhlaWdodCI6Ijw9NTk0IiwicGF0aCI6Ii9mLzZhZDU3YTY4LWIzNWItNGJiNC04NTY2LThmZmE5ZDlhMTkyNC9kZjFjaTNuLTNjNDhlMDAzLTdfM2EtNDU0Yi1hMDlhLWMyYTVjMjFlNTczNy5wbmciLCJ3aWR0aCI6Ijw9NjAwIn1dXSwiYXVkIjpbInVybjpzZXJ2aWNlOmltYWdlLm9wZXJhdGlvbnMiXX0.tG5pBzd_PaIiIFk9BlJRz5HrRIS_HokBWh1NRFw_o9g");
+            const wallTex = textureLoader.load("https://p.novaskin.me/5693463031.png");
             wallTex.wrapS = wallTex.wrapT = THREE.RepeatWrapping;
+            wallTex.magFilter = THREE.NearestFilter; 
+            wallTex.repeat.set(1, 1);
 
-            // Textura de piso
             const floorTex = textureLoader.load("https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQNZFZESawKRhoayAI9Om1iHSuOdP_-Uw9Qgw&s");
             floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
             floorTex.repeat.set(100, 100); 
 
-            // Textura de Pou ajustada para la forma triangular
             const enemyTex = textureLoader.load("https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSlxUY-GnxAtea6tXz_DHy4ZZkUyoFG7D1j2Q&s");
             enemyTex.wrapS = enemyTex.wrapT = THREE.RepeatWrapping;
-            // Repetimos ligeramente menos para que la cara ocupe el frontal del triángulo
             enemyTex.repeat.set(2, 1); 
             enemyTex.offset.set(0.25, 0.05); 
-
             enemyMat = new THREE.MeshLambertMaterial({ map: enemyTex });
 
-            // Suelo y Techo
             const planeGeo = new THREE.PlaneGeometry(1000, 1000);
             const floorMat = new THREE.MeshLambertMaterial({ map: floorTex });
-            const floor = new THREE.Mesh(planeGeo, floorMat);
+            floor = new THREE.Mesh(planeGeo, floorMat);
             floor.rotation.x = -Math.PI / 2;
             scene.add(floor);
 
-            const ceilMat = new THREE.MeshLambertMaterial({ color: 0x555533 });
-            const ceil = new THREE.Mesh(planeGeo, ceilMat);
+            const ceilTex = textureLoader.load("https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcR_uWf0P7eLh7iW3oF7pSIn-P-Fh2Iq6k0vFg&s");
+            ceilTex.wrapS = ceilTex.wrapT = THREE.RepeatWrapping;
+            ceilTex.repeat.set(200, 200);
+            const ceilMat = new THREE.MeshLambertMaterial({ map: ceilTex, color: 0x888877 });
+            ceil = new THREE.Mesh(planeGeo, ceilMat);
             ceil.rotation.x = Math.PI / 2;
-            ceil.position.y = 4;
+            ceil.position.y = CEILING_HEIGHT;
             scene.add(ceil);
 
-            // Paredes instanciadas
             const instancedGeo = new THREE.BoxGeometry(WALL_SIZE.w, WALL_SIZE.h, WALL_SIZE.d);
             const instancedMat = new THREE.MeshLambertMaterial({ map: wallTex });
             instancedWalls = new THREE.InstancedMesh(instancedGeo, instancedMat, WALL_COUNT);
             
+            resetWalls();
+            scene.add(instancedWalls);
+
+            createRifle();
+            setupControls();
+
+            setInterval(() => {
+                if (!isPaused && !transitioning) spawnEnemy();
+            }, 200);
+
+            animate();
+        }
+
+        function resetWalls() {
             const dummy = new THREE.Object3D();
+            wallData.length = 0;
             for (let i = 0; i < WALL_COUNT; i++) {
                 const pos = new THREE.Vector3(
                     (Math.random() - 0.5) * 120,
-                    2,
+                    WALL_SIZE.h / 2,
                     (Math.random() - 0.5) * 120
                 );
-                if (pos.length() < 8) pos.x += 10;
+                if (pos.length() < 8) pos.x += 12;
                 
                 const rot = Math.random() > 0.5 ? 0 : Math.PI / 2;
                 dummy.position.copy(pos);
@@ -157,12 +193,34 @@
                 instancedWalls.setMatrixAt(i, dummy.matrix);
                 wallData.push({ pos: pos.clone(), rot: rot });
             }
-            scene.add(instancedWalls);
+            instancedWalls.instanceMatrix.needsUpdate = true;
+        }
 
-            createRifle();
-            setupControls();
-            setInterval(spawnEnemy, 2500);
-            animate();
+        function createLamps() {
+            lamps.forEach(l => scene.remove(l));
+            lamps = [];
+
+            const lampGeo = new THREE.BoxGeometry(2, 0.1, 0.5);
+            const lampMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+
+            for(let i=0; i<20; i++) {
+                const lampGroup = new THREE.Group();
+                const mesh = new THREE.Mesh(lampGeo, lampMat);
+                
+                const light = new THREE.PointLight(0xbbeeff, 1.2, 20);
+                light.position.y = -0.5;
+                
+                lampGroup.add(mesh, light);
+                
+                lampGroup.position.set(
+                    (Math.random() - 0.5) * 100,
+                    CEILING_HEIGHT - 0.05,
+                    (Math.random() - 0.5) * 100
+                );
+                
+                lamps.push(lampGroup);
+                scene.add(lampGroup);
+            }
         }
 
         function createRifle() {
@@ -188,12 +246,19 @@
                 pitch = Math.max(-1.4, Math.min(1.4, pitch - e.movementY * 0.0015));
                 camera.rotation.set(pitch, yaw, 0);
             });
-            const k = (v) => (e) => {
-                if(e.code==='KeyW') moveForward=v; if(e.code==='KeyS') moveBackward=v;
-                if(e.code==='KeyA') moveLeft=v; if(e.code==='KeyD') moveRight=v;
-            };
-            document.addEventListener('keydown', k(true));
-            document.addEventListener('keyup', k(false));
+            
+            document.addEventListener('keydown', (e) => {
+                if(e.code==='KeyW') moveForward=true; if(e.code==='KeyS') moveBackward=true;
+                if(e.code==='KeyA') moveLeft=true; if(e.code==='KeyD') moveRight=true;
+                if(e.code==='Space' && canJump) {
+                    velocity.y += 18.0; 
+                    canJump = false;
+                }
+            });
+            document.addEventListener('keyup', (e) => {
+                if(e.code==='KeyW') moveForward=false; if(e.code==='KeyS') moveBackward=false;
+                if(e.code==='KeyA') moveLeft=false; if(e.code==='KeyD') moveRight=false;
+            });
             document.addEventListener('mousedown', () => { if(!isPaused) shoot(); });
         }
 
@@ -205,9 +270,12 @@
             bullets.push(b);
             scene.add(b);
             rifle.position.z += 0.05; 
+            muzzleFlash.intensity = 2.5;
+            flashTimer = 0.08; 
         }
 
         function checkCollisions(pos) {
+            if (transitioning) return false; 
             const r = 0.5;
             for (const w of wallData) {
                 const dx = Math.abs(pos.x - w.pos.x);
@@ -223,9 +291,76 @@
             return false;
         }
 
+        async function triggerNoclip() {
+            transitioning = true;
+            document.getElementById('noclip-msg').style.display = 'block';
+            velocity.y = -5; 
+            setTimeout(() => {
+                goToPoolrooms();
+            }, 1500);
+        }
+
+        function goToPoolrooms() {
+            currentLevel = 1;
+            enemySpeed = 0.06; 
+            
+            scene.background = new THREE.Color(0xe0f7ff);
+            scene.fog = new THREE.Fog(0xe0f7ff, 2, 50); 
+            
+            ambientLight.color.set(0xffffff);
+            ambientLight.intensity = 0.8; 
+            
+            dirLight.intensity = 0.5;
+            dirLight.position.set(10, 20, 10);
+
+            const textureLoader = new THREE.TextureLoader();
+            textureLoader.setCrossOrigin('anonymous');
+            
+            const poolTex = textureLoader.load(POOLROOMS_TEXTURE_URL);
+            poolTex.wrapS = poolTex.wrapT = THREE.RepeatWrapping;
+            
+            // Textura para Paredes (Repetición ajustada a las dimensiones del bloque)
+            const poolWallTex = poolTex.clone();
+            poolWallTex.repeat.set(2, 2); 
+            instancedWalls.material.map = poolWallTex;
+            instancedWalls.material.color.set(0xffffff);
+            instancedWalls.material.emissive = new THREE.Color(0x111111);
+            instancedWalls.material.needsUpdate = true;
+
+            // Textura para el Suelo (Repetición alta para cubrir el plano infinito)
+            const poolFloorTex = poolTex.clone();
+            poolFloorTex.repeat.set(400, 400); 
+            floor.material.map = poolFloorTex;
+            floor.material.color.set(0xffffff);
+            floor.material.needsUpdate = true;
+
+            // Textura para el Techo
+            const poolCeilTex = poolTex.clone();
+            poolCeilTex.repeat.set(400, 400);
+            ceil.material.map = poolCeilTex;
+            ceil.material.color.set(0xffffff);
+            ceil.material.needsUpdate = true;
+
+            enemyMat.color.set(0xff3333);
+
+            camera.position.y = PLAYER_HEIGHT;
+            velocity.set(0,0,0);
+            resetWalls();
+            createLamps(); 
+
+            document.getElementById('level-text').innerText = "LEVEL 1: POOLROOMS";
+            document.getElementById('level-text').style.color = "#00aaff";
+            document.getElementById('noclip-msg').style.display = 'none';
+            transitioning = false;
+        }
+
         function updatePhysics(dt) {
             velocity.x -= velocity.x * 10.0 * dt;
             velocity.z -= velocity.z * 10.0 * dt;
+            
+            if (!transitioning) {
+                velocity.y -= 9.8 * 6.0 * dt; 
+            }
 
             direction.z = Number(moveForward) - Number(moveBackward);
             direction.x = Number(moveRight) - Number(moveLeft);
@@ -233,6 +368,14 @@
 
             if (moveForward || moveBackward) velocity.z -= direction.z * 160.0 * dt;
             if (moveLeft || moveRight) velocity.x -= direction.x * 160.0 * dt;
+
+            camera.position.y += velocity.y * dt;
+            
+            if (!transitioning && camera.position.y < PLAYER_HEIGHT) {
+                velocity.y = 0;
+                camera.position.y = PLAYER_HEIGHT;
+                canJump = true;
+            }
 
             const oldPos = camera.position.clone();
             camera.translateX(-velocity.x * dt);
@@ -242,44 +385,22 @@
             camera.translateZ(velocity.z * dt);
             if (checkCollisions(camera.position)) camera.position.z = midPos.z;
 
-            if (moveForward || moveBackward || moveLeft || moveRight) {
+            if (canJump && (moveForward || moveBackward || moveLeft || moveRight)) {
                 bobTimer += dt * 8;
-                camera.position.y = 1.6 + Math.sin(bobTimer) * 0.04;
-            } else {
-                camera.position.y = THREE.MathUtils.lerp(camera.position.y, 1.6, 0.1);
+                camera.position.y += Math.sin(bobTimer) * 0.04;
             }
+            
             currentTilt = THREE.MathUtils.lerp(currentTilt, (moveLeft ? 0.02 : moveRight ? -0.02 : 0), 0.1);
             camera.rotation.z = currentTilt;
         }
 
         function spawnEnemy() {
-            if (isPaused || enemies.length > 18) return;
+            if (isPaused || enemies.length > 100) return; 
             const e = new THREE.Mesh(enemyGeo, enemyMat);
-            
-            // FORMA TRIANGULAR CON BORDES REDONDEADOS
-            // Escalamos para que sea ancho abajo y estrecho arriba, manteniendo los bordes suaves de la esfera
-            e.scale.set(1.4, 1.0, 1.2); 
-            
-            // Deformación manual de vértices para acentuar el triángulo
-            const positions = e.geometry.attributes.position;
-            for(let i = 0; i < positions.count; i++) {
-                const y = positions.getY(i);
-                const x = positions.getX(i);
-                const z = positions.getZ(i);
-                
-                // Si el punto está arriba, lo encogemos hacia el centro
-                // y va de -0.6 a 0.6.
-                if (y > 0) {
-                    const shrinkFactor = 1.0 - (y / 0.6) * 0.6; // Reduce hasta un 60% en la punta
-                    positions.setX(i, x * shrinkFactor);
-                    positions.setZ(i, z * shrinkFactor);
-                }
-            }
-            positions.needsUpdate = true;
-
+            e.scale.set(1.1, 1.0, 1.1);
             const a = Math.random() * Math.PI * 2;
-            e.position.set(camera.position.x + Math.cos(a)*18, 0.5, camera.position.z + Math.sin(a)*18);
-            e.userData = { hp: 2, offset: Math.random()*10 };
+            e.position.set(camera.position.x + Math.cos(a)*20, 0.6, camera.position.z + Math.sin(a)*20);
+            e.userData = { hp: 1, offset: Math.random()*10 }; 
             enemies.push(e);
             scene.add(e);
         }
@@ -292,10 +413,18 @@
 
             updatePhysics(dt);
 
+            if (flashTimer > 0) {
+                flashTimer -= dt;
+                muzzleFlash.position.copy(camera.position);
+                muzzleFlash.position.addScaledVector(new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion), 0.5);
+            } else {
+                muzzleFlash.intensity = 0;
+            }
+
             rifle.position.copy(camera.position);
             rifle.quaternion.copy(camera.quaternion);
             rifle.translateZ(-0.35); rifle.translateX(0.2); 
-            rifle.translateY(-0.18 + Math.sin(bobTimer)*0.01);
+            rifle.translateY(-0.18);
 
             for (let i = bullets.length - 1; i >= 0; i--) {
                 const b = bullets[i];
@@ -305,24 +434,27 @@
                 }
                 for (let j = enemies.length - 1; j >= 0; j--) {
                     if (b.position.distanceTo(enemies[j].position) < 0.8) {
-                        if (--enemies[j].userData.hp <= 0) {
-                            scene.remove(enemies[j]); enemies.splice(j, 1);
-                            document.getElementById('score').innerText = ++score;
+                        scene.remove(enemies[j]); enemies.splice(j, 1);
+                        score++;
+                        document.getElementById('score').innerText = score;
+                        
+                        if (score === KILLS_FOR_NOCLIP && currentLevel === 0) {
+                            triggerNoclip();
                         }
+
                         scene.remove(b); bullets.splice(i, 1); break;
                     }
                 }
             }
 
             enemies.forEach(e => {
-                e.lookAt(camera.position.x, 0.5, camera.position.z);
-                const d = new THREE.Vector3().subVectors(camera.position, e.position).setLength(0.045);
+                e.lookAt(camera.position.x, 0.6, camera.position.z);
+                const d = new THREE.Vector3().subVectors(camera.position, e.position).setLength(enemySpeed);
                 e.position.add(d);
-                // Salto de Pou
-                e.position.y = 0.5 + Math.abs(Math.sin(time*4 + e.userData.offset))*0.3;
+                e.position.y = 0.6 + Math.abs(Math.sin(time*4 + e.userData.offset))*0.3;
                 
                 if (e.position.distanceTo(camera.position) < 1.3) {
-                    health -= 0.5;
+                    health -= 0.8; 
                     document.getElementById('health-fill').style.width = Math.max(0, health) + '%';
                     if (health <= 0) {
                         isPaused = true; document.exitPointerLock();
